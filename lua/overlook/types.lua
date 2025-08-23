@@ -3,3 +3,7 @@
 ---@field lnum integer The line number to position the popup.
 ---@field col integer The column number to position the popup.
 ---@field title? string Optional title for the popup.
+---@field win_height? string Optional win height for the popup.
+---@field win_width? string Optional win width for the popup.
+---@field win_col? string Optional win col for the popup.
+---@field win_row? string Optional win row for the popup.

@@ -42,8 +42,7 @@ function M.new(opts)
 end
 
 --- Initializes instance variables and performs basic validation.
----@param opts table { target_bufnr: integer, lnum: integer, col: integer, title?: string }
----@return boolean
+---@param opts OverlookPopupOptions
 function Popup:initialize_state(opts)
   if not opts then
     vim.notify("Overlook: Invalid opts provided to Popup", vim.log.levels.ERROR)
@@ -63,6 +62,32 @@ function Popup:initialize_state(opts)
   return true
 end
 
+local function is_qf_window_at_bottom()
+  local qf_bottom = nil
+  local max_bottom = -1
+
+  for _, win in ipairs(vim.api.nvim_list_wins()) do
+    local wininfo = vim.fn.getwininfo(win)[1]
+    local pos = vim.api.nvim_win_get_position(win)
+    local height = vim.api.nvim_win_get_height(win)
+    local bottom = pos[1] + height - 1
+
+    if bottom > max_bottom then
+      max_bottom = bottom
+    end
+
+    if wininfo.quickfix == 1 then
+      qf_bottom = bottom
+    end
+  end
+
+  if qf_bottom then
+    return qf_bottom == max_bottom
+  else
+    return false
+  end
+end
+
 --- Calculates the window configuration for the first popup.
 ---@return vim.api.keyset.win_config win_config Neovim window configuration table, or nil if an error occurs
 function Popup:config_for_first_popup()
@@ -70,10 +95,11 @@ function Popup:config_for_first_popup()
   local cursor_buf_pos = api.nvim_win_get_cursor(current_winid)
   local cursor_abs_screen_pos = vim.fn.screenpos(current_winid, cursor_buf_pos[1], cursor_buf_pos[2] + 1)
   local win_pos = api.nvim_win_get_position(current_winid)
+  local win_current_height = api.nvim_win_get_height(current_winid)
 
   -- distance from the top of the window to the cursor (including winbar)
   local winbar_enabled = vim.o.winbar ~= ""
-  local max_window_height = api.nvim_win_get_height(current_winid) - (winbar_enabled and 1 or 0)
+  local max_window_height = win_current_height - (winbar_enabled and 1 or 0)
   local max_window_width = api.nvim_win_get_width(current_winid)
 
   local screen_space_above = cursor_abs_screen_pos.row - win_pos[1] - 1 - (winbar_enabled and 1 or 0)
@@ -82,14 +108,24 @@ function Popup:config_for_first_popup()
 
   local place_above = screen_space_above > max_window_height / 2
 
+  local is_qf_win = false
+  if vim.bo.filetype == "qf" then
+    if is_qf_window_at_bottom() then
+      place_above = true
+    else
+      place_above = false
+    end
+    is_qf_win = true
+  end
+
   local border_overhead = Config.ui.border ~= "none" and 2 or 0
   local max_fittable_content_height = (place_above and screen_space_above or screen_space_below) - border_overhead
 
   local target_height = math.min(math.floor(max_window_height * Config.ui.size_ratio), max_fittable_content_height)
   local target_width = math.floor(max_window_width * Config.ui.size_ratio)
 
-  local height = math.max(Config.ui.min_height, target_height)
-  local width = math.max(Config.ui.min_width, target_width)
+  local height = self.opts.win_height or math.max(Config.ui.min_height, target_height)
+  local width = self.opts.win_width or math.max(Config.ui.min_width, target_width)
 
   local win_config = {
     relative = "win",
@@ -102,13 +138,19 @@ function Popup:config_for_first_popup()
 
     win = current_winid,
     zindex = Config.ui.z_index_base,
-    col = screen_space_left + Config.ui.col_offset,
+    col = self.opts.win_col or screen_space_left + Config.ui.col_offset,
   }
 
   if place_above then
-    win_config.row = math.max(0, screen_space_above - height - border_overhead - Config.ui.row_offset)
+    win_config.row = self.opts.win_row
+      or math.max(0, screen_space_above - height - border_overhead - Config.ui.row_offset)
   else
-    win_config.row = screen_space_above + 1 + Config.ui.row_offset
+    local win_row = tonumber(self.opts.win_row)
+    if is_qf_win then
+      win_row = win_current_height + 1
+    end
+
+    win_config.row = win_row or screen_space_above + 1 + Config.ui.row_offset
   end
 
   self.root_winid = current_winid
